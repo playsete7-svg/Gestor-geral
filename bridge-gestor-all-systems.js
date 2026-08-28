@@ -136,6 +136,7 @@ function subscribeBridgeRealtime(firestore) {
           const couriers = snap.docs.map(d => ({ id: d.id, ...d.data(), _source: "motoboy" }));
           window._bridgeCouriers = couriers;
           window.dispatchEvent(new CustomEvent("gestor:bridge-couriers", { detail: couriers }));
+          updateGestorConsolidated();
         },
         (err) => { bridgeState.motoboy.error = err.message; }
       );
@@ -151,6 +152,7 @@ function subscribeBridgeRealtime(firestore) {
           const stores = snap.docs.map(d => ({ id: d.id, ...d.data(), _source: "marketplace" }));
           window._bridgeMarketplaceStores = stores;
           window.dispatchEvent(new CustomEvent("gestor:bridge-stores", { detail: stores }));
+          updateGestorConsolidated();
         },
         (err) => { bridgeState.marketplace.error = err.message; }
       );

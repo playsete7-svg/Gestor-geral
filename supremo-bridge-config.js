@@ -158,6 +158,34 @@ async function supremoRestReadCollection(projectId, apiKey, collectionPath) {
   });
 }
 
+async function supremoRestReadDocument(projectId, apiKey, collectionPath, docId) {
+  const path = collectionPath.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  const safeId = encodeURIComponent(String(docId));
+  const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/${path}/${safeId}?key=${encodeURIComponent(apiKey)}`;
+  const response = await fetch(url);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Firestore ${projectId} ${response.status}: ${await response.text()}`);
+  const document = await response.json();
+  return { id: String(document.name || "").split("/").pop(), ...Object.fromEntries(Object.entries(document.fields || {}).map(([key, value]) => [key, supremoFirestoreVal(value)])) };
+}
+
+function supremoMergePatch(base, patch) {
+  const result = { ...(base || {}) };
+  Object.entries(patch || {}).forEach(([key, value]) => {
+    if (!key.includes(".")) { result[key] = value; return; }
+    const parts = key.split(".");
+    let cursor = result;
+    parts.slice(0, -1).forEach(part => { if (!cursor[part] || typeof cursor[part] !== "object" || Array.isArray(cursor[part])) cursor[part] = {}; cursor = cursor[part]; });
+    cursor[parts.at(-1)] = value;
+  });
+  return result;
+}
+
+async function supremoRestMergeWrite(projectId, apiKey, collectionPath, docId, patch) {
+  const existing = await supremoRestReadDocument(projectId, apiKey, collectionPath, docId);
+  return supremoRestWrite(projectId, apiKey, collectionPath, docId, supremoMergePatch(existing || {}, patch));
+}
+
 // Helper: publicar evento no barramento do gestor
 async function supremoPublishEvent(system, type, severity, message, entityId, payload) {
   const cfg = SUPREMO_BRIDGE_CONFIG.gestor;
@@ -195,5 +223,7 @@ if (typeof window !== "undefined") {
   window.supremoFirestoreVal = supremoFirestoreVal;
   window.supremoRestWrite = supremoRestWrite;
   window.supremoRestReadCollection = supremoRestReadCollection;
+  window.supremoRestReadDocument = supremoRestReadDocument;
+  window.supremoRestMergeWrite = supremoRestMergeWrite;
   window.supremoPublishEvent = supremoPublishEvent;
 }
