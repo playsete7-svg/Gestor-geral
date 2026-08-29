@@ -33,6 +33,8 @@ const SUPREMO_BRIDGE_CONFIG = {
     messagingSenderId: "55447377903",
     appId: "1:55447377903:web:e9cbbcdba3a4ed5dc4081a",
   },
+  // Cadastre aqui as demais lojas parceiras com Web Config Firebase completo.
+  stores: [],
 
   // Central de Motoboys
   motoboy: {

@@ -23,6 +23,7 @@
 
 // Apps secundarios para cada sistema
 let storeBridgeDb = null;
+let storeBridgeDbs = [];
 let motoboyBridgeDb = null;
 let marketplaceBridgeDb = null;
 // customerBridgeDb ja existe no gestor-geral-enterprise.html
@@ -59,6 +60,20 @@ async function initGestorBridges() {
       console.warn("[Bridge4] Falha no bridge da loja:", e);
     }
 
+    // Lojas adicionais podem ser cadastradas em SUPREMO_BRIDGE_CONFIG.stores.
+    // Cada loja mantém suas próprias credenciais e os dados são etiquetados pela origem.
+    storeBridgeDbs = [storeBridgeDb].filter(Boolean);
+    for (const [index, storeConfig] of (Array.isArray(SUPREMO_BRIDGE_CONFIG.stores) ? SUPREMO_BRIDGE_CONFIG.stores : []).entries()) {
+      try {
+        const app = initializeApp(storeConfig, `store-bridge-gestor-${index + 2}`);
+        storeBridgeDbs.push(firestore.getFirestore(app));
+        bridgeState.store.connected = true;
+      } catch (e) {
+        bridgeState.store.error = e.message;
+        console.warn("[Bridge4] Falha em uma loja adicional:", e);
+      }
+    }
+
     // === BRIDGE: CENTRAL DE MOTOBOYS ===
     // Le rides e motoboys para supervisionar a logistica real
     try {
@@ -84,6 +99,7 @@ async function initGestorBridges() {
     }
 
     // Iniciar listeners de tempo real
+    subscribeAdditionalStoreBridges(firestore);
     subscribeBridgeRealtime(firestore);
 
     return bridgeState;
@@ -91,6 +107,33 @@ async function initGestorBridges() {
     console.error("[Bridge4] Falha geral ao inicializar bridges:", error);
     return bridgeState;
   }
+}
+
+/**
+ * Escuta clientes, pedidos e produtos de lojas adicionais configuradas.
+ * A primeira loja continua usando os listeners legados abaixo; as demais são
+ * mescladas nos mesmos arrays para que a Central opere sobre todas as origens.
+ */
+function subscribeAdditionalStoreBridges(firestore) {
+  const { collection, onSnapshot } = firestore;
+  const stores = storeBridgeDbs.slice(1);
+  if (!stores.length) return;
+  const buckets = stores.map(() => ({ orders: [], users: [], products: [] }));
+  const publish = () => {
+    window._bridgeStoreOrders = [...(window._bridgeStoreOrders || []).filter(row => row._storeBridgeIndex === undefined), ...buckets.flatMap(bucket => bucket.orders)];
+    window._bridgeStoreUsers = [...(window._bridgeStoreUsers || []).filter(row => row._storeBridgeIndex === undefined), ...buckets.flatMap(bucket => bucket.users)];
+    window._bridgeStoreProducts = [...(window._bridgeStoreProducts || []).filter(row => row._storeBridgeIndex === undefined), ...buckets.flatMap(bucket => bucket.products)];
+    window.dispatchEvent(new CustomEvent("gestor:bridge-store-users", { detail: window._bridgeStoreUsers }));
+    window.dispatchEvent(new CustomEvent("gestor:bridge-store-orders", { detail: window._bridgeStoreOrders }));
+    window.dispatchEvent(new CustomEvent("gestor:bridge-store-products", { detail: window._bridgeStoreProducts }));
+    updateGestorConsolidated();
+  };
+  stores.forEach((db, index) => {
+    const source = index + 1;
+    onSnapshot(collection(db, "orders"), snap => { buckets[index].orders = snap.docs.map(d => ({ id: d.id, ...d.data(), _source: `store_${source}`, _storeBridgeIndex: source })); publish(); }, err => { bridgeState.store.error = err.message; });
+    onSnapshot(collection(db, "users"), snap => { buckets[index].users = snap.docs.map(d => ({ id: d.id, ...d.data(), _source: `store_${source}`, _storeBridgeIndex: source })); publish(); }, err => { bridgeState.store.error = err.message; });
+    onSnapshot(collection(db, "produtos"), snap => { buckets[index].products = snap.docs.map(d => ({ id: d.id, ...d.data(), _source: `store_${source}`, _storeBridgeIndex: source })); publish(); }, err => { bridgeState.store.error = err.message; });
+  });
 }
 
 /**
