@@ -40,7 +40,7 @@ const bridgeState = {
  */
 async function initGestorBridges() {
   try {
-    const { initializeApp, getFirestore } = await import(
+    const { initializeApp } = await import(
       "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js"
     );
     const firestore = await import(
@@ -51,7 +51,7 @@ async function initGestorBridges() {
     // Le orders e users da loja para ter dados reais de pedidos
     try {
       const storeApp = initializeApp(SUPREMO_BRIDGE_CONFIG.store, "store-bridge-gestor");
-      storeBridgeDb = getFirestore(storeApp);
+      storeBridgeDb = firestore.getFirestore(storeApp);
       bridgeState.store.connected = true;
       console.log("[Bridge4] Bridge da loja conectado:", SUPREMO_BRIDGE_CONFIG.store.projectId);
     } catch (e) {
@@ -63,7 +63,7 @@ async function initGestorBridges() {
     // Le rides e motoboys para supervisionar a logistica real
     try {
       const motoboyApp = initializeApp(SUPREMO_BRIDGE_CONFIG.motoboy, "motoboy-bridge-gestor");
-      motoboyBridgeDb = getFirestore(motoboyApp);
+      motoboyBridgeDb = firestore.getFirestore(motoboyApp);
       bridgeState.motoboy.connected = true;
       console.log("[Bridge4] Bridge de motoboys conectado:", SUPREMO_BRIDGE_CONFIG.motoboy.projectId);
     } catch (e) {
@@ -75,7 +75,7 @@ async function initGestorBridges() {
     // Le stores e orders do marketplace para supervisionar a vitrine
     try {
       const marketplaceApp = initializeApp(SUPREMO_BRIDGE_CONFIG.marketplace, "marketplace-bridge-gestor");
-      marketplaceBridgeDb = getFirestore(marketplaceApp);
+      marketplaceBridgeDb = firestore.getFirestore(marketplaceApp);
       bridgeState.marketplace.connected = true;
       console.log("[Bridge4] Bridge do marketplace conectado:", SUPREMO_BRIDGE_CONFIG.marketplace.projectId);
     } catch (e) {
@@ -114,6 +114,27 @@ function subscribeBridgeRealtime(firestore) {
         (err) => { bridgeState.store.error = err.message; console.warn("[Bridge4] Listener loja orders erro:", err); }
       );
     } catch (e) { console.warn("[Bridge4] Nao foi possivel escutar orders da loja:", e); }
+      onSnapshot(
+        collection(storeBridgeDb, "users"),
+        (snap) => {
+          const users = snap.docs.map(d => ({ id: d.id, ...d.data(), _source: "store" }));
+          window._bridgeStoreUsers = users;
+          window.dispatchEvent(new CustomEvent("gestor:bridge-store-users", { detail: users }));
+          updateGestorConsolidated();
+        },
+        (err) => { bridgeState.store.error = err.message; }
+      );
+
+      onSnapshot(
+        collection(storeBridgeDb, "produtos"),
+        (snap) => {
+          const products = snap.docs.map(d => ({ id: d.id, ...d.data(), _source: "store" }));
+          window._bridgeStoreProducts = products;
+          window.dispatchEvent(new CustomEvent("gestor:bridge-store-products", { detail: products }));
+          updateGestorConsolidated();
+        },
+        (err) => { bridgeState.store.error = err.message; }
+      );
   }
 
   // === Central Motoboy: rides + motoboys ===
@@ -141,6 +162,27 @@ function subscribeBridgeRealtime(firestore) {
         (err) => { bridgeState.motoboy.error = err.message; }
       );
     } catch (e) { console.warn("[Bridge4] Nao foi possivel escutar rides/motoboys:", e); }
+      onSnapshot(
+        collection(motoboyBridgeDb, "courierInfractions"),
+        (snap) => {
+          const infractions = snap.docs.map(d => ({ id: d.id, ...d.data(), _source: "motoboy" }));
+          window._bridgeInfractions = infractions;
+          window.dispatchEvent(new CustomEvent("gestor:bridge-infractions", { detail: infractions }));
+          updateGestorConsolidated();
+        },
+        (err) => { bridgeState.motoboy.error = err.message; }
+      );
+
+      onSnapshot(
+        collection(motoboyBridgeDb, "courierApplications"),
+        (snap) => {
+          const applications = snap.docs.map(d => ({ id: d.id, ...d.data(), _source: "motoboy" }));
+          window._bridgeCourierApplications = applications;
+          window.dispatchEvent(new CustomEvent("gestor:bridge-courier-applications", { detail: applications }));
+          updateGestorConsolidated();
+        },
+        (err) => { bridgeState.motoboy.error = err.message; }
+      );
   }
 
   // === Marketplace: stores ===
@@ -157,6 +199,36 @@ function subscribeBridgeRealtime(firestore) {
         (err) => { bridgeState.marketplace.error = err.message; }
       );
     } catch (e) { console.warn("[Bridge4] Nao foi possivel escitar stores do marketplace:", e); }
+      onSnapshot(
+        collection(marketplaceBridgeDb, "users"),
+        (snap) => {
+          const users = snap.docs.map(d => ({ id: d.id, ...d.data(), _source: "marketplace" }));
+          window._bridgeMarketplaceUsers = users;
+          window.dispatchEvent(new CustomEvent("gestor:bridge-marketplace-users", { detail: users }));
+          updateGestorConsolidated();
+        },
+        (err) => { bridgeState.marketplace.error = err.message; }
+      );
+
+      onSnapshot(
+        collection(marketplaceBridgeDb, "orders"),
+        (snap) => {
+          const orders = snap.docs.map(d => ({ id: d.id, ...d.data(), _source: "marketplace" }));
+          window._bridgeMarketplaceOrders = orders;
+          window.dispatchEvent(new CustomEvent("gestor:bridge-marketplace-orders", { detail: orders }));
+          updateGestorConsolidated();
+        },
+        (err) => { bridgeState.marketplace.error = err.message; }
+      );
+
+      ["courierApplications", "storeApplications"].forEach(collectionName => {
+        onSnapshot(collection(marketplaceBridgeDb, collectionName), (snap) => {
+          const rows = snap.docs.map(d => ({ id: d.id, ...d.data(), _source: "marketplace" }));
+          window[`_bridge${collectionName}`] = rows;
+          window.dispatchEvent(new CustomEvent(`gestor:bridge-${collectionName}`, { detail: rows }));
+          updateGestorConsolidated();
+        }, (err) => { bridgeState.marketplace.error = err.message; });
+      });
   }
 }
 
@@ -166,20 +238,26 @@ function subscribeBridgeRealtime(firestore) {
  */
 function updateGestorConsolidated() {
   const storeOrders = window._bridgeStoreOrders || [];
+  const storeUsers = window._bridgeStoreUsers || [];
+  const storeProducts = window._bridgeStoreProducts || [];
   const rides = window._bridgeRides || [];
   const couriers = window._bridgeCouriers || [];
+  const infractions = window._bridgeInfractions || [];
+  const courierApplications = [...(window._bridgeCourierApplications || []), ...(window._bridgecourierApplications || [])];
+  const storeApplications = window._bridgestoreApplications || [];
   const marketplaceStores = window._bridgeMarketplaceStores || [];
-  // customerOrders e customerUsers ja existem do bridge original
+  const marketplaceUsers = window._bridgeMarketplaceUsers || [];
+  const marketplaceOrders = window._bridgeMarketplaceOrders || [];
   const customerUsers = window._bridgeCustomerUsers || [];
 
   // Consolidar: para cada pedido da loja, cruzar com a corrida da central
-  const consolidated = storeOrders.map(order => {
-    const ride = rides.find(r => String(r.orderId) === String(order.id));
-    const courier = ride ? couriers.find(c => c.id === ride.selectedCourierId) : null;
+  const consolidated = [...storeOrders, ...marketplaceOrders].map(order => {
+    const ride = rides.find(r => String(r.orderId) === String(order.id) || String(r.orderId) === String(order.orderId));
+    const courier = ride ? couriers.find(c => String(c.id) === String(ride.selectedCourierId)) : null;
     return {
       ...order,
-      ride: ride ? { id: ride.id, status: ride.status, courierName: ride.selectedCourierName } : null,
-      courier: courier ? { id: courier.id, name: courier.name, status: courier.status } : null,
+      ride: ride ? { id: ride.id, status: ride.status, courierName: ride.selectedCourierName, motoboyLocation: ride.motoboyLocation || null, updatedAt: ride.updatedAt || null } : null,
+      courier: courier ? { id: courier.id, name: courier.name, status: courier.status, lastSeenAt: courier.lastSeenAt || null } : null,
       _consolidated: true,
     };
   });
@@ -193,7 +271,12 @@ function updateGestorConsolidated() {
       rides,
       couriers,
       stores: marketplaceStores,
-      customers: customerUsers,
+      customers: [...customerUsers, ...marketplaceUsers, ...storeUsers],
+      users: [...customerUsers, ...marketplaceUsers, ...storeUsers],
+      products: storeProducts,
+      infractions,
+      courierApplications,
+      storeApplications,
       bridgeStatus: bridgeState,
     }
   }));
